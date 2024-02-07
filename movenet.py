@@ -1,4 +1,7 @@
 import os
+import pickle
+from pathlib import Path
+
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -112,16 +115,16 @@ KEYPOINT_EDGE_INDS_TO_COLOR = {
         (0, 2): 'c',
         (1, 3): 'm',
         (2, 4): 'c',
-        (0, 5): 'm',
-        (0, 6): 'c',
+        (0, 5): 'g',
+        (0, 6): 'g',
         (5, 7): 'm',
         (7, 9): 'm',
         (6, 8): 'c',
         (8, 10): 'c',
-        (5, 6): 'y',
-        (5, 11): 'm',
-        (6, 12): 'c',
-        (11, 12): 'y',
+        (5, 6): 'g',
+        (5, 11): 'g',
+        (6, 12): 'g',
+        (11, 12): 'g',
         (11, 13): 'm',
         (13, 15): 'm',
         (12, 14): 'c',
@@ -129,9 +132,10 @@ KEYPOINT_EDGE_INDS_TO_COLOR = {
 }
 
 def _keypoints_and_edges_for_display(keypoints_with_scores,
-                                                                         height,
-                                                                         width,
-                                                                         keypoint_threshold=0.11):
+                                     height,
+                                     width,
+                                     keypoint_threshold=0.11,
+                                     torso_centroid=None):
     """Returns high confidence keypoints and edges for visualization.
 
     Args:
@@ -181,12 +185,15 @@ def _keypoints_and_edges_for_display(keypoints_with_scores,
         edges_xy = np.stack(keypoint_edges_all, axis=0)
     else:
         edges_xy = np.zeros((0, 2, 2))
+    if torso_centroid is not None:
+        keypoints_xy = np.concatenate([keypoints_xy, ([width, height] * torso_centroid[::-1])[np.newaxis]])
     return keypoints_xy, edges_xy, edge_colors
 
 
-def draw_prediction_on_image(
-        image, keypoints_with_scores, crop_region=None, close_figure=False,
-        output_image_height=None):
+def draw_prediction_on_image(image, keypoints_with_scores,
+                             crop_region=None, close_figure=False,
+                             output_image_height=None,
+                             torso_centroid=None):
     """Draws the keypoint predictions on image.
 
     Args:
@@ -223,7 +230,7 @@ def draw_prediction_on_image(
 
     (keypoint_locs, keypoint_edges,
      edge_colors) = _keypoints_and_edges_for_display(
-             keypoints_with_scores, height, width)
+             keypoints_with_scores, height, width, torso_centroid=torso_centroid)
 
     line_segments.set_segments(keypoint_edges)
     line_segments.set_color(edge_colors)
@@ -255,31 +262,39 @@ def draw_prediction_on_image(
                  interpolation=cv2.INTER_CUBIC)
     return image_from_plot
 
-# Open the default camera
-cap = cv2.VideoCapture(0)
+def get_torso_centroid(pose, keypoint_threshold=0.11):
+    torso_joints = [
+        pose[0, 0, KEYPOINT_DICT[keypoint], :2]
+        for keypoint in
+        ['nose', 'left_hip', 'right_hip', 'left_shoulder', 'right_shoulder']
+        if 
+        pose[0, 0, KEYPOINT_DICT[keypoint], 2] > keypoint_threshold
+    ]
+    if len(torso_joints) <= 2:
+        return None
+    return np.mean(np.stack(torso_joints), axis=0)
+    
+if __name__ == "__main__":
+    # Open the default camera
+    cap = cv2.VideoCapture(0)
 
-while True:
-    # Read a frame from the camera
-    ret, frame = cap.read()
-    
-    # Display the frame
-    
-    
-    # Get the middle 384 pixels from the 480x640 frame
-    # frame = frame[48:-48, 128:-128, :]
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame = cv2.resize(frame, (input_size, input_size))
-    pose = movenet(tf.expand_dims(frame, axis=0))
-    print(pose.shape, pose)
-    
-    frame = draw_prediction_on_image(frame, pose)
-    
-    cv2.imshow('Camera', frame)
+    while True:
+        # Read a frame from the camera
+        ret, frame = cap.read()
+        
+        # Display the frame
+        frame = cv2.resize(frame, (input_size, input_size))
+        pose = movenet(tf.expand_dims(frame, axis=0))
+        
+        torso_centroid = get_torso_centroid(pose)
+        frame = draw_prediction_on_image(frame, pose, torso_centroid=torso_centroid)
+        
+        cv2.imshow('Camera', frame)
 
-    # Break the loop if 'q' is pressed
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        # Break the loop if 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-# Release the camera and close the window
-cap.release()
-cv2.destroyAllWindows()
+    # Release the camera and close the window
+    cap.release()
+    cv2.destroyAllWindows()
